@@ -1,31 +1,32 @@
-const { Client, IntentsBitField, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
-const { createDiscountCode } = require('./shopier.js');
+const { Client, GatewayIntentBits, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
 const { DC_TOKEN } = require('./config.js');
+const { createDiscountCode } = require('./shopier.js');
+const { InteractionResponseFlags } = require('discord.js'); // Ephemeral uyarısı için
 
-// Bot oluştur
+// Express ile HTTP sunucusu için gerekli modülü ekle
+const express = require('express');
+const app = express();
+
 const client = new Client({
   intents: [
-    IntentsBitField.Flags.Guilds,
-    IntentsBitField.Flags.GuildMessages,
-    IntentsBitField.Flags.MessageContent,
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
 
-// Kullanıcı kontrolü için Set (her kullanıcı sadece 1 kez katılabilir)
-const usedUsers = new Set();
-
-// Bot hazır olduğunda
-client.once('ready', () => {
+client.on('ready', () => {
   console.log(`[${new Date().toLocaleString()}] Bot hazır!`);
 });
 
-// Komut: !cekilis ile buton oluşturma
 client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+
   if (message.content === '!cekilis') {
-    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${message.author.username} (${message.author.id}) !cekilis komutunu kullandı.`);
+    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${message.author.tag} (${message.author.id}) !cekilis komutunu kullandı.`);
 
     const button = new ButtonBuilder()
-      .setCustomId('cekilis_butonu')
+      .setCustomId('cekilis')
       .setLabel('Şansını Dene!')
       .setStyle(ButtonStyle.Primary);
 
@@ -38,47 +39,48 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Butona basıldığında indirim kodu üretme ve Shopier'e ekleme
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
 
-  if (interaction.customId === 'cekilis_butonu') {
-    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${interaction.user.username} (${interaction.user.id}) çekiliş butonuna bastı.`);
+  if (interaction.customId === 'cekilis') {
+    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${interaction.user.tag} (${interaction.user.id}) çekiliş butonuna bastı.`);
 
-    // Kullanıcının daha önce çekilişe katılıp katılmadığını kontrol et
-    if (usedUsers.has(interaction.user.id)) {
-      console.log(`[${new Date().toLocaleString()}] Kullanıcı ${interaction.user.username} (${interaction.user.id}) daha önce çekilişe katılmış, tekrar katılamaz!`);
-      await interaction.reply({
-        content: 'Üzgünüm, bu çekilişe sadece bir kez katılabilirsin!',
-        ephemeral: true, // Geçici olarak eski yöntemi kullanıyoruz
+    await interaction.reply({
+      content: 'Çekilişe katıldın! İndirim kodu oluşturuluyor...',
+      flags: InteractionResponseFlags.Ephemeral,
+    });
+
+    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${interaction.user.tag} (${interaction.user.id}) çekilişe eklendi.`);
+
+    console.log(`[${new Date().toLocaleString()}] İndirim kodu oluşturuluyor... Kullanıcı: ${interaction.user.tag} (${interaction.user.id})`);
+
+    try {
+      const discountCode = await createDiscountCode();
+      console.log(`[${new Date().toLocaleString()}] Kod: ${discountCode.code}, İndirim Miktarı: ${discountCode.amountOff} TL (%${Math.round((discountCode.amountOff / 2850) * 100)}), Minimum Sepet: ${discountCode.amountMinimum} TL, Son Kullanma: ${discountCode.expiresAt}`);
+      console.log(`[${new Date().toLocaleString()}] İndirim kodu başarıyla oluşturuldu! Shopier Yanıtı:`, discountCode);
+
+      await interaction.followUp({
+        content: `İndirim kodun: **${discountCode.code}** 🎉\nİndirim Miktarı: **${discountCode.amountOff} TL** (%${Math.round((discountCode.amountOff / 2850) * 100)})\nMinimum Sepet Tutarı: **${discountCode.amountMinimum} TL**\nSon Kullanma Tarihi: **${discountCode.expiresAt}**\nBu kodu Zero Pedal Makro Cihazı satın alırken kullanabilirsin!`,
+        flags: InteractionResponseFlags.Ephemeral,
       });
-      return;
-    }
-
-    // Kullanıcıyı listeye ekle (tekrar katılmasını engelle)
-    usedUsers.add(interaction.user.id);
-    console.log(`[${new Date().toLocaleString()}] Kullanıcı ${interaction.user.username} (${interaction.user.id}) çekilişe eklendi.`);
-
-    // Shopier'e indirim kodu oluştur
-    const discountResult = await createDiscountCode(interaction.user.id, interaction.user.username);
-
-    if (discountResult.success) {
-      const { code, amountOff, percentOff, expiresAt } = discountResult;
-      await interaction.reply({
-        content: `🎉 Tebrikler! İşte indirim kodun: **${code}**  
-- İndirim Miktarı: ${amountOff} TL (%${percentOff})  
-- Son Kullanma Tarihi: ${expiresAt}  
-- Bu kod sana özel ve sadece bir kez kullanılabilir!`,
-        ephemeral: true,
-      });
-    } else {
-      await interaction.reply({
-        content: 'Üzgünüm, indirim kodu oluştururken bir hata oluştu. Lütfen tekrar dene!',
-        ephemeral: true,
+    } catch (error) {
+      console.error(`[${new Date().toLocaleString()}] İndirim kodu oluşturulurken hata oluştu:`, error);
+      await interaction.followUp({
+        content: 'İndirim kodu oluşturulurken bir hata oluştu. Lütfen tekrar dene.',
+        flags: InteractionResponseFlags.Ephemeral,
       });
     }
   }
 });
 
-// Botu başlat
 client.login(DC_TOKEN);
+
+// HTTP Sunucusunu Başlat
+const PORT = process.env.PORT || 3000; // Render PORT ortam değişkenini kullanır, yoksa 3000 portunu kullanır
+app.get('/', (req, res) => {
+  res.send('Bot çalışıyor!'); // Basit bir yanıt döndür
+});
+
+app.listen(PORT, () => {
+  console.log(`[${new Date().toLocaleString()}] HTTP sunucusu ${PORT} portunda çalışıyor.`);
+});
